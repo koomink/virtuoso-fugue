@@ -59,6 +59,18 @@
 
 TradingAgents is a multi-agent trading framework that mirrors the dynamics of real-world trading firms. By deploying specialized LLM-powered agents: from fundamental analysts, sentiment experts, and technical analysts, to trader, risk management team, the platform collaboratively evaluates market conditions and informs trading decisions. Moreover, these agents engage in dynamic discussions to pinpoint the optimal strategy.
 
+### Maestro Virtuoso Adapter
+
+This repository includes a paper-mode Virtuoso plugin adapter at
+`tradingagents_virtuoso.strategy:TradingAgentsVirtuosoStrategy`. The adapter
+loads TradingAgents as a research engine, requests market and research payloads
+through Maestro DataHub, and returns a Maestro `TargetAllocationResult`.
+
+Required strategy config keys are `symbol`, `asset_type`, and `cash_symbol`.
+The adapter declares `allow_direct_external_data_calls=False`; TradingAgents
+data tools are routed to Maestro-prefetched payloads and SDK 1.1 runtime
+DataHub requests during the strategy run.
+
 <p align="center">
   <img src="assets/schema.png" style="width: 100%; height: auto;">
 </p>
