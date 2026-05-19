@@ -52,3 +52,10 @@ markers = [
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+
+[tool.ruff]
+include = [
+    "tradingagents_virtuoso/**/*.py",
+    "tests/test_virtuoso_adapter.py",
+    "tests/test_maestro_run_once_smoke.py",
+]

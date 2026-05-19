@@ -61,15 +61,148 @@ TradingAgents is a multi-agent trading framework that mirrors the dynamics of re
 
 ### Maestro Virtuoso Adapter
 
-This repository includes a paper-mode Virtuoso plugin adapter at
+This repository includes a Virtuoso plugin adapter at
 `tradingagents_virtuoso.strategy:TradingAgentsVirtuosoStrategy`. The adapter
 loads TradingAgents as a research engine, requests market and research payloads
-through Maestro DataHub, and returns a Maestro `TargetAllocationResult`.
+through Maestro DataHub, and returns a Maestro `StrategySignalResult`. Maestro
+then converts the signal into a target allocation through the configured
+`signal_to_allocation` policy.
 
 Required strategy config keys are `symbol`, `asset_type`, and `cash_symbol`.
-The adapter declares `allow_direct_external_data_calls=False`; TradingAgents
-data tools are routed to Maestro-prefetched payloads and SDK 1.1 runtime
-DataHub requests during the strategy run.
+The adapter supports Maestro `paper` and `live_approval` modes, while declaring
+`allow_direct_external_data_calls=False`; TradingAgents data tools are routed to
+Maestro-prefetched payloads and SDK 1.1 runtime DataHub requests during the
+strategy run. The v1 adapter defaults to the `market`, `news`, and
+`fundamentals` analysts; the upstream `social` sentiment analyst is deferred
+until its social data sources can be supplied through Maestro DataHub.
+
+Example Maestro strategy registration:
+
+```yaml
+strategies:
+  - id: tradingagents
+    enabled: true
+    weight: 1.0
+    entrypoint: "tradingagents_virtuoso.strategy:TradingAgentsVirtuosoStrategy"
+    signal_to_allocation:
+      type: single_symbol_action_map
+      cash_symbol: CASH
+      action_target_weights:
+        buy: 0.30
+        hold: 0.10
+        sell: 0.0
+    config:
+      symbol: AAPL
+      asset_type: stock
+      cash_symbol: CASH
+      selected_analysts: ["market", "news", "fundamentals"]
+      llm_provider: openai
+```
+
+OpenRouter is supported through the upstream OpenAI-compatible client. Set
+`OPENROUTER_API_KEY` in Maestro's `.env`, then use OpenRouter model IDs:
+
+```yaml
+config:
+  symbol: AAPL
+  asset_type: stock
+  cash_symbol: CASH
+  selected_analysts: ["market", "news", "fundamentals"]
+  llm_provider: openrouter
+  quick_think_llm: openai/gpt-4o-mini
+  deep_think_llm: anthropic/claude-sonnet-4.5
+```
+
+Each TradingAgents role can also override the default provider/model. Keys are
+normalized role names such as `market`, `news`, `fundamentals`,
+`bull_researcher`, `bear_researcher`, `research_manager`, `trader`,
+`aggressive_debator`, `neutral_debator`, `conservative_debator`,
+`portfolio_manager`, and `reflector`.
+
+```yaml
+config:
+  llm_provider: openai
+  quick_think_llm: gpt-5.4-mini
+  deep_think_llm: gpt-5.4
+  agent_llms:
+    market:
+      provider: openrouter
+      model: openai/gpt-4o-mini
+    news:
+      provider: openrouter
+      model: perplexity/sonar
+    research_manager:
+      provider: anthropic
+      model: claude-sonnet-4-5
+      effort: high
+    portfolio_manager:
+      provider: openai
+      model: gpt-5.4
+      reasoning_effort: high
+```
+
+Deterministic Maestro smoke test:
+
+```bash
+.venv/bin/pytest -q tests/test_maestro_run_once_smoke.py
+```
+
+The smoke test patches the TradingAgents graph to avoid LLM/API calls and uses
+Maestro's mock DataHub. It verifies that Maestro loads the adapter, preserves the
+source signal, normalizes it through `signal_to_allocation`, creates the paper
+order, and records the `live_approval` dry-run proposal without broker
+submission.
+
+Manual paper operator rehearsal:
+
+```bash
+cd /root/projects/Symphony/Maestro
+uv pip install --python .venv/bin/python /root/projects/Symphony/Virtuoso/TradingAgents
+.venv/bin/maestro run-once --config /root/projects/Symphony/Virtuoso/TradingAgents/configs/tradingagents_yahoo_gdelt_paper.example.yaml
+```
+
+The operator config uses live LLM credentials and live DataHub network providers
+for Yahoo/yfinance-style market data and GDELT news. Set the required LLM API
+key, such as `OPENAI_API_KEY`, before running it.
+
+Manual live approval dry-run rehearsal:
+
+```bash
+cd /root/projects/Symphony/Maestro
+uv pip install --python .venv/bin/python /root/projects/Symphony/Virtuoso/TradingAgents
+cp /root/projects/Symphony/Virtuoso/TradingAgents/configs/tradingagents_kis_live_approval_dry_run.example.yaml configs/tradingagents_kis_live_approval_dry_run.local.yaml
+```
+
+Edit the local config with private Telegram chat/user IDs, KIS account details,
+and operator-local `state`, `audit`, and token-cache paths. Keep
+`execution.live_order_enabled: false`, `execution.live_order_dry_run: true`, and
+`execution.require_broker_quote_validation: false` for the first rehearsal.
+
+Required environment:
+
+```bash
+export OPENAI_API_KEY=...
+export OPENROUTER_API_KEY=...
+export TELEGRAM_BOT_TOKEN=...
+export KIS_ACCOUNT_ID=...
+export KIS_APP_KEY=...
+export KIS_APP_SECRET=...
+export KIS_ACCESS_TOKEN=...
+export KIS_APPROVAL_KEY=...
+```
+
+Run the readiness checks and one approval-gated dry-run:
+
+```bash
+.venv/bin/maestro health --config configs/tradingagents_kis_live_approval_dry_run.local.yaml
+.venv/bin/maestro live-preflight --config configs/tradingagents_kis_live_approval_dry_run.local.yaml
+.venv/bin/maestro run-once --config configs/tradingagents_kis_live_approval_dry_run.local.yaml
+```
+
+After the run, inspect the state database tables/events for `strategy_runs`,
+`live_proposal_data_snapshot`, and `live_order_dry_run`, plus the configured
+audit JSONL. A valid dry-run has a TradingAgents source signal, a normalized
+target allocation, a Telegram approval decision, and no broker order submission.
 
 <p align="center">
   <img src="assets/schema.png" style="width: 100%; height: auto;">

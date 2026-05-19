@@ -1,0 +1,112 @@
+mode: paper
+
+portfolio:
+  base_currency: USD
+  initial_cash: 10000
+  allowed_symbols:
+    - CASH_USD
+    - AAPL
+
+universe:
+  instruments:
+    - symbol: CASH_USD
+      asset_type: cash
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: USD
+      quantity_step: 0.01
+      price_tick: 0.01
+      min_order_quantity: 0.01
+      min_order_notional: 0
+    - symbol: AAPL
+      asset_type: stock
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: AAPL
+      exchange_code: NASD
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+
+strategies:
+  - id: tradingagents
+    enabled: true
+    weight: 1.0
+    entrypoint: "tradingagents_virtuoso.strategy:TradingAgentsVirtuosoStrategy"
+    signal_to_allocation:
+      type: single_symbol_action_map
+      cash_symbol: CASH_USD
+      action_target_weights:
+        buy: 0.30
+        hold: 0.10
+        sell: 0.0
+    config:
+      symbol: AAPL
+      asset_type: stock
+      cash_symbol: CASH_USD
+      selected_analysts: ["market", "news", "fundamentals"]
+      llm_provider: openai
+      # OpenRouter is also supported when OPENROUTER_API_KEY is present:
+      # llm_provider: openrouter
+      # quick_think_llm: openai/gpt-4o-mini
+      # deep_think_llm: anthropic/claude-sonnet-4.5
+      # agent_llms:
+      #   market:
+      #     provider: openrouter
+      #     model: openai/gpt-4o-mini
+      #   portfolio_manager:
+      #     provider: openai
+      #     model: gpt-5.4
+      #     reasoning_effort: high
+
+datahub:
+  providers:
+    - name: yahoo
+      provider: yahoo
+      data_types:
+        - price
+        - ohlcv
+        - fundamental
+        - financial_statements
+        - technical_indicators
+      symbols: [AAPL]
+      stale_after_seconds: 604800
+      symbol_map:
+        AAPL: AAPL
+    - name: gdelt_news
+      provider: gdelt
+      data_types: [news]
+      symbols: [AAPL, MARKET]
+      priority: 20
+      gdelt_timespan: 7d
+      gdelt_max_records: 25
+      stale_after_seconds: 604800
+      symbol_map:
+        AAPL: Apple
+        MARKET: "US stock market"
+
+execution:
+  engine: paper
+  order_generation_mode: target_rebalance
+
+risk:
+  max_single_asset_weight: 0.5
+  min_cash_weight: 0.05
+
+state:
+  sqlite_path: var/tradingagents_yahoo_gdelt_paper_state.db
+
+audit:
+  jsonl_path: var/tradingagents_yahoo_gdelt_paper_audit.jsonl
+
+approval:
+  enabled: false
+  provider: console
+  require_approval: false
+  default_decision: approved
+  timeout_seconds: 300

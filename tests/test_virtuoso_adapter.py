@@ -47,15 +47,19 @@ class DataRequest:
 
 
 @dataclass
-class TargetAllocationResult:
+class StrategySignalResult:
     strategy_id: str
     strategy_version: str
     timestamp: datetime
-    allocations: dict[str, float]
+    symbol: str
+    action: str
+    rating: str | None
     confidence: float
-    time_horizon: str
-    rationale: str
-    metadata: dict
+    time_horizon: str | None = None
+    position_sizing: str | None = None
+    rationale: str | None = None
+    risk_flags: list[str] | None = None
+    metadata: dict | None = None
 
 
 class BaseStrategyPlugin:
@@ -86,27 +90,33 @@ sdk.DataRequest = DataRequest
 sdk.StrategyContext = StrategyContext
 sdk.StrategyManifest = StrategyManifest
 sdk.StrategyRuntime = StrategyRuntime
-sdk.TargetAllocationResult = TargetAllocationResult
+sdk.StrategySignalResult = StrategySignalResult
 
 maestro = types.ModuleType("maestro")
 maestro.sdk = sdk
 sys.modules.setdefault("maestro", maestro)
 sys.modules.setdefault("maestro.sdk", sdk)
 
-from tradingagents.dataflows import config as dataflow_config
-from tradingagents.dataflows import interface as dataflow_interface
-from tradingagents_virtuoso import strategy as adapter
-from tradingagents_virtuoso.strategy import TradingAgentsVirtuosoStrategy
+from tradingagents.dataflows import config as dataflow_config  # noqa: E402
+from tradingagents.dataflows import interface as dataflow_interface  # noqa: E402
+from tradingagents.default_config import DEFAULT_CONFIG  # noqa: E402
+from tradingagents.graph import trading_graph as graph_module  # noqa: E402
+from tradingagents_virtuoso import strategy as adapter  # noqa: E402
+from tradingagents_virtuoso.strategy import TradingAgentsVirtuosoStrategy  # noqa: E402
 
 
 def _context(**overrides):
+    context_fields = {}
+    for key in ("run_mode", "strategy_id", "timestamp"):
+        if key in overrides:
+            context_fields[key] = overrides.pop(key)
     config = {
         "symbol": "AAPL",
         "asset_type": "stock",
         "cash_symbol": "CASH",
     }
     config.update(overrides)
-    return StrategyContext(config=config)
+    return StrategyContext(config=config, **context_fields)
 
 
 def test_manifest_matches_maestro_contract():
@@ -117,10 +127,13 @@ def test_manifest_matches_maestro_contract():
     assert isinstance(plugin, BaseStrategyPlugin)
     assert manifest.strategy_id == "tradingagents"
     assert manifest.sdk_contract_version == "1.1"
-    assert manifest.result_type == "target_allocation"
-    assert manifest.supported_modes == ["paper"]
+    assert manifest.result_type == "strategy_signal"
+    assert manifest.supported_modes == ["paper", "live_approval"]
     assert "financial_statements" in manifest.requires_data
     assert manifest.requires_llm is True
+    assert "openrouter" in manifest.supported_llm_providers
+    assert manifest.required_env_vars == []
+    assert manifest.can_run_live is True
     assert manifest.allow_direct_external_data_calls is False
 
 
@@ -141,7 +154,9 @@ def test_build_data_requests_declares_prefetch_contract():
     assert by_key[("AAPL", "insider_transactions")].intended_use == "tradable"
 
     statement_requests = [
-        req for req in requests if req.symbol == "AAPL" and req.data_type == "financial_statements"
+        req
+        for req in requests
+        if req.symbol == "AAPL" and req.data_type == "financial_statements"
     ]
     assert {req.statement_type for req in statement_requests} == {
         "balance_sheet",
@@ -152,20 +167,23 @@ def test_build_data_requests_declares_prefetch_contract():
 
 
 @pytest.mark.parametrize(
-    ("decision", "expected_weight", "expected_confidence"),
+    ("decision", "expected_action", "expected_rating", "expected_confidence"),
     [
-        ("Rating: Buy\nAdd exposure.", 0.30, 0.75),
-        ("Rating: Hold\nWait for clarity.", 0.10, 0.50),
-        ("Rating: Sell\nExit risk.", 0.0, 0.75),
+        ("Rating: Buy\nAdd exposure.", "buy", "Buy", 0.75),
+        ("Rating: Overweight\nLean positive.", "buy", "Overweight", 0.65),
+        ("Rating: Hold\nWait for clarity.", "hold", "Hold", 0.50),
+        ("Rating: Underweight\nReduce exposure.", "sell", "Underweight", 0.65),
+        ("Rating: Sell\nExit risk.", "sell", "Sell", 0.75),
     ],
 )
-def test_run_maps_tradingagents_rating_to_target_allocation(
-    monkeypatch, decision, expected_weight, expected_confidence
+def test_run_maps_tradingagents_rating_to_strategy_signal(
+    monkeypatch, decision, expected_action, expected_rating, expected_confidence
 ):
     class FakeGraph:
         def __init__(self, selected_analysts, config):
             self.selected_analysts = selected_analysts
             self.config = config
+            assert selected_analysts == ["market", "news", "fundamentals"]
 
         def propagate(self, symbol, trade_date):
             assert symbol == "AAPL"
@@ -184,11 +202,17 @@ def test_run_maps_tradingagents_rating_to_target_allocation(
     monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
     result = TradingAgentsVirtuosoStrategy().run(DataBundle(data={}), _context())
 
-    assert isinstance(result, TargetAllocationResult)
-    assert result.allocations == {"AAPL": expected_weight, "CASH": 1.0 - expected_weight}
+    assert isinstance(result, StrategySignalResult)
+    assert result.symbol == "AAPL"
+    assert result.action == expected_action
+    assert result.rating == expected_rating
     assert result.confidence == expected_confidence
     assert result.metadata["raw_decision"] == decision
-    assert result.metadata["rating"] in {"Buy", "Hold", "Sell"}
+    assert result.metadata["rating"] == expected_rating
+    assert (
+        result.position_sizing
+        == "Maestro signal_to_allocation policy owns target weight"
+    )
 
 
 def test_data_bundle_vendor_formats_payloads_and_cleans_up(monkeypatch):
@@ -228,7 +252,10 @@ def test_data_bundle_vendor_formats_payloads_and_cleans_up(monkeypatch):
                 "get_income_statement", "AAPL", "quarterly", "2025-01-03"
             )
             assert "sma_2" in indicator
-            return ({"final_trade_decision": "Rating: Overweight"}, "Rating: Overweight")
+            return (
+                {"final_trade_decision": "Rating: Overweight"},
+                "Rating: Overweight",
+            )
 
     monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
     bundle = DataBundle(
@@ -236,14 +263,39 @@ def test_data_bundle_vendor_formats_payloads_and_cleans_up(monkeypatch):
             "AAPL": {
                 "ohlcv": {
                     "bars": [
-                        {"date": "2025-01-01", "open": 1, "high": 2, "low": 1, "close": 1, "volume": 10},
-                        {"date": "2025-01-02", "open": 2, "high": 3, "low": 2, "close": 2, "volume": 20},
-                        {"date": "2025-01-03", "open": 3, "high": 4, "low": 3, "close": 3, "volume": 30},
+                        {
+                            "date": "2025-01-01",
+                            "open": 1,
+                            "high": 2,
+                            "low": 1,
+                            "close": 1,
+                            "volume": 10,
+                        },
+                        {
+                            "date": "2025-01-02",
+                            "open": 2,
+                            "high": 3,
+                            "low": 2,
+                            "close": 2,
+                            "volume": 20,
+                        },
+                        {
+                            "date": "2025-01-03",
+                            "open": 3,
+                            "high": 4,
+                            "low": 3,
+                            "close": 3,
+                            "volume": 30,
+                        },
                     ]
                 },
                 "news": {
                     "articles": [
-                        {"date": "2025-01-02", "title": "Earnings beat", "summary": "Strong quarter"}
+                        {
+                            "date": "2025-01-02",
+                            "title": "Earnings beat",
+                            "summary": "Strong quarter",
+                        }
                     ]
                 },
                 "fundamental": {"market_cap": 100},
@@ -269,6 +321,182 @@ def test_data_bundle_vendor_formats_payloads_and_cleans_up(monkeypatch):
     assert dataflow_config.get_config() == original_config
 
 
+def test_run_accepts_live_approval_mode(monkeypatch):
+    class FakeGraph:
+        def __init__(self, selected_analysts, config):
+            pass
+
+        def propagate(self, symbol, trade_date):
+            return ({"final_trade_decision": "Rating: Buy"}, "Rating: Buy")
+
+    monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
+
+    result = TradingAgentsVirtuosoStrategy().run(
+        DataBundle(data={}),
+        _context(run_mode="live_approval"),
+    )
+
+    assert result.action == "buy"
+    assert result.rating == "Buy"
+
+
+def test_run_forwards_openrouter_and_agent_llm_overrides(monkeypatch):
+    class FakeGraph:
+        def __init__(self, selected_analysts, config):
+            assert config["llm_provider"] == "openrouter"
+            assert config["quick_think_llm"] == "openai/gpt-4o-mini"
+            assert config["deep_think_llm"] == "anthropic/claude-sonnet-4.5"
+            assert config["backend_url"] is None
+            assert config["agent_llms"] == {
+                "market": {
+                    "provider": "openrouter",
+                    "model": "openai/gpt-4o-mini",
+                },
+                "portfolio_manager": {
+                    "provider": "openai",
+                    "model": "gpt-5.4",
+                    "reasoning_effort": "high",
+                },
+            }
+
+        def propagate(self, symbol, trade_date):
+            return ({"final_trade_decision": "Rating: Hold"}, "Rating: Hold")
+
+    monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
+
+    result = TradingAgentsVirtuosoStrategy().run(
+        DataBundle(data={}),
+        _context(
+            llm_provider="openrouter",
+            quick_think_llm="openai/gpt-4o-mini",
+            deep_think_llm="anthropic/claude-sonnet-4.5",
+            agent_llms={
+                "market": {
+                    "provider": "openrouter",
+                    "model": "openai/gpt-4o-mini",
+                    "api_key": "must-not-pass-through",
+                },
+                "portfolio_manager": {
+                    "provider": "openai",
+                    "model": "gpt-5.4",
+                    "reasoning_effort": "high",
+                },
+            },
+        ),
+    )
+
+    assert result.action == "hold"
+    assert "must-not-pass-through" not in repr(result.metadata)
+    assert result.metadata["llm_provider"] == "openrouter"
+    assert result.metadata["agent_llms"]["market"] == {
+        "provider": "openrouter",
+        "model": "openai/gpt-4o-mini",
+    }
+
+
+def test_run_rejects_unsupported_mode(monkeypatch):
+    class FakeGraph:
+        def __init__(self, selected_analysts, config):
+            pass
+
+        def propagate(self, symbol, trade_date):
+            return ({"final_trade_decision": "Rating: Hold"}, "Rating: Hold")
+
+    monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
+
+    with pytest.raises(ValueError, match="paper and live_approval"):
+        TradingAgentsVirtuosoStrategy().run(
+            DataBundle(data={}),
+            _context(run_mode="live_readonly"),
+        )
+
+
+def test_tradingagents_graph_builds_per_agent_llm_overrides(monkeypatch, tmp_path):
+    created = []
+
+    class FakeClient:
+        def __init__(self, provider, model, base_url, kwargs):
+            self.provider = provider
+            self.model = model
+            self.base_url = base_url
+            self.kwargs = kwargs
+
+        def get_llm(self):
+            return FakeLLM(self.provider, self.model)
+
+    class FakeLLM:
+        def __init__(self, provider, model):
+            self.provider = provider
+            self.model = model
+
+        @property
+        def label(self):
+            return f"{self.provider}:{self.model}"
+
+        def with_structured_output(self, schema):
+            del schema
+            return self
+
+        def bind_tools(self, tools):
+            del tools
+            return self
+
+    def fake_create_llm_client(provider, model, base_url=None, **kwargs):
+        created.append(
+            {
+                "provider": provider,
+                "model": model,
+                "base_url": base_url,
+                "kwargs": kwargs,
+            }
+        )
+        return FakeClient(provider, model, base_url, kwargs)
+
+    monkeypatch.setattr(graph_module, "create_llm_client", fake_create_llm_client)
+    config = dict(DEFAULT_CONFIG)
+    config.update(
+        {
+            "project_dir": str(tmp_path),
+            "results_dir": str(tmp_path / "results"),
+            "data_cache_dir": str(tmp_path / "cache"),
+            "memory_log_path": str(tmp_path / "memory.md"),
+            "llm_provider": "openai",
+            "quick_think_llm": "gpt-5.4-mini",
+            "deep_think_llm": "gpt-5.4",
+            "agent_llms": {
+                "market": {
+                    "provider": "openrouter",
+                    "model": "openai/gpt-4o-mini",
+                },
+                "portfolio_manager": {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-4-5",
+                    "effort": "high",
+                },
+            },
+        }
+    )
+
+    graph = graph_module.TradingAgentsGraph(
+        selected_analysts=["market"],
+        config=config,
+    )
+
+    assert graph.graph_setup.agent_llms["market"].label == (
+        "openrouter:openai/gpt-4o-mini"
+    )
+    assert graph.graph_setup.agent_llms["portfolio_manager"].label == (
+        "anthropic:claude-sonnet-4-5"
+    )
+    assert {(item["provider"], item["model"]) for item in created} >= {
+        ("openai", "gpt-5.4"),
+        ("openai", "gpt-5.4-mini"),
+        ("openrouter", "openai/gpt-4o-mini"),
+        ("anthropic", "claude-sonnet-4-5"),
+    }
+    assert created[-1]["kwargs"]["effort"] == "high"
+
+
 def test_runtime_vendor_fetches_missing_payloads_during_graph(monkeypatch):
     class FakeRuntime:
         def __init__(self):
@@ -282,8 +510,22 @@ def test_runtime_vendor_fetches_missing_payloads_during_graph(monkeypatch):
                     data={
                         request.symbol: {
                             "bars": [
-                                {"date": "2025-01-01", "open": 1, "high": 2, "low": 1, "close": 1, "volume": 10},
-                                {"date": "2025-01-02", "open": 2, "high": 3, "low": 2, "close": 2, "volume": 20},
+                                {
+                                    "date": "2025-01-01",
+                                    "open": 1,
+                                    "high": 2,
+                                    "low": 1,
+                                    "close": 1,
+                                    "volume": 10,
+                                },
+                                {
+                                    "date": "2025-01-02",
+                                    "open": 2,
+                                    "high": 3,
+                                    "low": 2,
+                                    "close": 2,
+                                    "volume": 20,
+                                },
                             ]
                         }
                     }
@@ -308,7 +550,11 @@ def test_runtime_vendor_fetches_missing_payloads_during_graph(monkeypatch):
                         request.symbol: {
                             "news": {
                                 "articles": [
-                                    {"date": "2025-01-02", "title": "Runtime news", "summary": "Fetched on demand"}
+                                    {
+                                        "date": "2025-01-02",
+                                        "title": "Runtime news",
+                                        "summary": "Fetched on demand",
+                                    }
                                 ]
                             }
                         }
@@ -354,7 +600,9 @@ def test_runtime_vendor_fetches_missing_payloads_during_graph(monkeypatch):
     monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
     runtime = FakeRuntime()
 
-    TradingAgentsVirtuosoStrategy().run_with_runtime(DataBundle(data={}), _context(), runtime)
+    TradingAgentsVirtuosoStrategy().run_with_runtime(
+        DataBundle(data={}), _context(), runtime
+    )
 
     assert [request.data_type for request in runtime.requests] == [
         "ohlcv",
@@ -400,7 +648,9 @@ def test_adapter_imports_only_public_maestro_sdk():
         elif isinstance(node, ast.ImportFrom) and node.module:
             imports.append(node.module)
 
-    maestro_imports = [name for name in imports if name == "maestro" or name.startswith("maestro.")]
+    maestro_imports = [
+        name for name in imports if name == "maestro" or name.startswith("maestro.")
+    ]
     assert maestro_imports == ["maestro.sdk"]
 
 

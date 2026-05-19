@@ -17,7 +17,7 @@ from maestro.sdk import (
     StrategyContext,
     StrategyManifest,
     StrategyRuntime,
-    TargetAllocationResult,
+    StrategySignalResult,
 )
 from tradingagents.agents.utils.rating import parse_rating
 from tradingagents.dataflows import config as dataflow_config
@@ -41,6 +41,8 @@ class AdapterConfig:
     llm_provider: str = "openai"
     deep_think_llm: str = DEFAULT_CONFIG["deep_think_llm"]
     quick_think_llm: str = DEFAULT_CONFIG["quick_think_llm"]
+    backend_url: str | None = DEFAULT_CONFIG["backend_url"]
+    agent_llms: dict[str, Any] = field(default_factory=dict)
     output_language: str = DEFAULT_CONFIG["output_language"]
     max_debate_rounds: int = DEFAULT_CONFIG["max_debate_rounds"]
     max_risk_discuss_rounds: int = DEFAULT_CONFIG["max_risk_discuss_rounds"]
@@ -48,19 +50,10 @@ class AdapterConfig:
     news_lookback_days: int = 7
     news_limit: int = 20
     include_insider_transactions: bool = False
-    rating_weights: dict[str, float] = field(
-        default_factory=lambda: {
-            "Buy": 0.30,
-            "Overweight": 0.20,
-            "Hold": 0.10,
-            "Underweight": 0.05,
-            "Sell": 0.0,
-        }
-    )
 
 
 class TradingAgentsVirtuosoStrategy(BaseStrategyPlugin):
-    """Paper-mode Maestro wrapper for the TradingAgents research graph."""
+    """Maestro wrapper for the TradingAgents research graph."""
 
     VERSION = "0.1.0"
 
@@ -70,14 +63,20 @@ class TradingAgentsVirtuosoStrategy(BaseStrategyPlugin):
             strategy_id="tradingagents",
             name="TradingAgents",
             version=self.VERSION,
-            supported_modes=["paper"],
+            supported_modes=["paper", "live_approval"],
             supported_asset_types=["cash", "stock", "etf", "domestic_etf", "us_etf"],
-            result_type="target_allocation",
-            requires_data=["ohlcv", "price", "fundamental", "news", "financial_statements"],
+            result_type="strategy_signal",
+            requires_data=[
+                "ohlcv",
+                "price",
+                "fundamental",
+                "news",
+                "financial_statements",
+            ],
             requires_llm=True,
-            supported_llm_providers=["openai", "anthropic", "google"],
-            required_env_vars=["OPENAI_API_KEY"],
-            can_run_live=False,
+            supported_llm_providers=["openai", "openrouter", "anthropic", "google"],
+            required_env_vars=[],
+            can_run_live=True,
             allow_direct_external_data_calls=False,
             estimated_runtime_seconds=180,
         )
@@ -172,7 +171,7 @@ class TradingAgentsVirtuosoStrategy(BaseStrategyPlugin):
         self,
         data_bundle: DataBundle,
         context: StrategyContext,
-    ) -> TargetAllocationResult:
+    ) -> StrategySignalResult:
         return self._run_with_bundle_view(_BundleView(data_bundle), context)
 
     def run_with_runtime(
@@ -180,7 +179,7 @@ class TradingAgentsVirtuosoStrategy(BaseStrategyPlugin):
         data_bundle: DataBundle,
         context: StrategyContext,
         runtime: StrategyRuntime,
-    ) -> TargetAllocationResult:
+    ) -> StrategySignalResult:
         cfg = _adapter_config(context)
         return self._run_with_bundle_view(
             _RuntimeBundleView(data_bundle, context, cfg, runtime),
@@ -191,10 +190,13 @@ class TradingAgentsVirtuosoStrategy(BaseStrategyPlugin):
         self,
         bundle_view: "_BundleView",
         context: StrategyContext,
-    ) -> TargetAllocationResult:
+    ) -> StrategySignalResult:
         cfg = _adapter_config(context)
-        if _getattr(context, "run_mode", "paper") != "paper":
-            raise ValueError("TradingAgents Virtuoso adapter supports paper mode only")
+        run_mode = _run_mode_value(context)
+        if run_mode not in {"paper", "live_approval"}:
+            raise ValueError(
+                "TradingAgents Virtuoso adapter supports paper and live_approval modes only"
+            )
 
         trade_date = _trade_date(cfg, context)
         graph_config = _tradingagents_config(cfg)
@@ -208,7 +210,6 @@ class TradingAgentsVirtuosoStrategy(BaseStrategyPlugin):
 
         final_decision = _final_decision(state, processed_signal)
         rating = parse_rating(final_decision)
-        symbol_weight = cfg.rating_weights.get(rating, cfg.rating_weights["Hold"])
         confidence = {
             "Buy": 0.75,
             "Sell": 0.75,
@@ -217,16 +218,16 @@ class TradingAgentsVirtuosoStrategy(BaseStrategyPlugin):
             "Hold": 0.50,
         }[rating]
 
-        return TargetAllocationResult(
+        return StrategySignalResult(
             strategy_id=_getattr(context, "strategy_id", self.manifest().strategy_id),
             strategy_version=self.manifest().version,
             timestamp=_getattr(context, "timestamp", datetime.utcnow()),
-            allocations={
-                cfg.symbol: round(symbol_weight, 10),
-                cfg.cash_symbol: round(1.0 - symbol_weight, 10),
-            },
+            symbol=cfg.symbol,
+            action=_rating_to_action(rating),
+            rating=rating,
             confidence=confidence,
             time_horizon="1-3 months",
+            position_sizing="Maestro signal_to_allocation policy owns target weight",
             rationale=_summarize(final_decision),
             metadata={
                 "rating": rating,
@@ -235,6 +236,7 @@ class TradingAgentsVirtuosoStrategy(BaseStrategyPlugin):
                 "llm_provider": cfg.llm_provider,
                 "deep_think_llm": cfg.deep_think_llm,
                 "quick_think_llm": cfg.quick_think_llm,
+                "agent_llms": _safe_agent_llms(cfg.agent_llms),
                 "reports_present": {
                     "market_report": bool(_mapping_get(state, "market_report")),
                     "sentiment_report": bool(_mapping_get(state, "sentiment_report")),
@@ -251,9 +253,13 @@ class TradingAgentsVirtuosoStrategy(BaseStrategyPlugin):
 
 def _adapter_config(context: StrategyContext) -> AdapterConfig:
     raw = dict(_getattr(context, "config", {}) or {})
-    missing = [key for key in ("symbol", "asset_type", "cash_symbol") if not raw.get(key)]
+    missing = [
+        key for key in ("symbol", "asset_type", "cash_symbol") if not raw.get(key)
+    ]
     if missing:
-        raise ValueError(f"Missing TradingAgents adapter config keys: {', '.join(missing)}")
+        raise ValueError(
+            f"Missing TradingAgents adapter config keys: {', '.join(missing)}"
+        )
 
     defaults = AdapterConfig(
         symbol=str(raw["symbol"]),
@@ -269,12 +275,54 @@ def _adapter_config(context: StrategyContext) -> AdapterConfig:
     values["asset_type"] = str(values["asset_type"])
     values["cash_symbol"] = str(values["cash_symbol"])
     values["selected_analysts"] = list(values["selected_analysts"])
-    values["rating_weights"] = dict(values["rating_weights"])
+    values["agent_llms"] = dict(values["agent_llms"] or {})
     return AdapterConfig(**values)
 
 
+def _run_mode_value(context: StrategyContext) -> str:
+    run_mode = _getattr(context, "run_mode", "paper")
+    return str(getattr(run_mode, "value", run_mode))
+
+
+def _rating_to_action(rating: str) -> str:
+    if rating in {"Buy", "Overweight"}:
+        return "buy"
+    if rating in {"Underweight", "Sell"}:
+        return "sell"
+    return "hold"
+
+
+def _safe_agent_llms(agent_llms: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    allowed_keys = {
+        "provider",
+        "model",
+        "tier",
+        "base_url",
+        "backend_url",
+        "reasoning_effort",
+        "openai_reasoning_effort",
+        "thinking_level",
+        "google_thinking_level",
+        "effort",
+        "anthropic_effort",
+        "timeout",
+        "max_retries",
+    }
+    metadata = {}
+    for agent_name, raw_spec in agent_llms.items():
+        if isinstance(raw_spec, dict):
+            metadata[str(agent_name)] = {
+                str(key): value
+                for key, value in raw_spec.items()
+                if key in allowed_keys
+            }
+    return metadata
+
+
 def _data_request(**kwargs: Any) -> DataRequest:
-    return DataRequest(**{key: value for key, value in kwargs.items() if value is not None})
+    return DataRequest(
+        **{key: value for key, value in kwargs.items() if value is not None}
+    )
 
 
 def _runtime_data_request(
@@ -330,6 +378,8 @@ def _tradingagents_config(cfg: AdapterConfig) -> dict[str, Any]:
             "llm_provider": cfg.llm_provider,
             "deep_think_llm": cfg.deep_think_llm,
             "quick_think_llm": cfg.quick_think_llm,
+            "backend_url": cfg.backend_url,
+            "agent_llms": _safe_agent_llms(cfg.agent_llms),
             "output_language": cfg.output_language,
             "max_debate_rounds": cfg.max_debate_rounds,
             "max_risk_discuss_rounds": cfg.max_risk_discuss_rounds,
@@ -369,15 +419,19 @@ def _maestro_vendor(bundle: "_BundleView"):
         )
     )
     dataflow_interface.VENDOR_METHODS["get_indicators"]["maestro"] = (
-        lambda symbol, indicator, curr_date, look_back_days=30: _format_runtime_indicator(
-            bundle.indicator_payload(symbol, indicator, curr_date, look_back_days),
-            indicator,
-        )
-        or _format_indicator(
-            bundle.indicator_ohlcv_payload(symbol, indicator, curr_date, look_back_days),
-            indicator,
-            curr_date,
-            look_back_days,
+        lambda symbol, indicator, curr_date, look_back_days=30: (
+            _format_runtime_indicator(
+                bundle.indicator_payload(symbol, indicator, curr_date, look_back_days),
+                indicator,
+            )
+            or _format_indicator(
+                bundle.indicator_ohlcv_payload(
+                    symbol, indicator, curr_date, look_back_days
+                ),
+                indicator,
+                curr_date,
+                look_back_days,
+            )
         )
     )
     dataflow_interface.VENDOR_METHODS["get_fundamentals"]["maestro"] = (
@@ -434,7 +488,9 @@ class _BundleView:
         found = self._find(self.data, symbol, data_type)
         return _unwrap_payload(found)
 
-    def stock_payload(self, symbol: str, start_date: str | None, end_date: str | None) -> Any:
+    def stock_payload(
+        self, symbol: str, start_date: str | None, end_date: str | None
+    ) -> Any:
         del start_date, end_date
         return self.payload(symbol, "ohlcv")
 
@@ -501,21 +557,29 @@ class _BundleView:
         if isinstance(data, list):
             for item in data:
                 item_symbol = _mapping_get(item, "symbol")
-                item_type = _mapping_get(item, "data_type") or _mapping_get(item, "type")
+                item_type = _mapping_get(item, "data_type") or _mapping_get(
+                    item, "type"
+                )
                 if item_symbol == symbol and item_type == data_type:
                     return item
             return None
         if not isinstance(data, dict):
             return None
 
-        for key in ((symbol, data_type), f"{symbol}:{data_type}", f"{symbol}.{data_type}"):
+        for key in (
+            (symbol, data_type),
+            f"{symbol}:{data_type}",
+            f"{symbol}.{data_type}",
+        ):
             if key in data:
                 return data[key]
 
         by_symbol = data.get(symbol)
         if isinstance(by_symbol, dict) and data_type in by_symbol:
             return by_symbol[data_type]
-        if isinstance(by_symbol, dict) and _payload_matches_data_type(by_symbol, data_type):
+        if isinstance(by_symbol, dict) and _payload_matches_data_type(
+            by_symbol, data_type
+        ):
             return by_symbol
 
         by_type = data.get(data_type)
@@ -539,7 +603,9 @@ class _RuntimeBundleView(_BundleView):
         self.runtime = runtime
         self._runtime_cache: dict[tuple[Any, ...], Any] = {}
 
-    def stock_payload(self, symbol: str, start_date: str | None, end_date: str | None) -> Any:
+    def stock_payload(
+        self, symbol: str, start_date: str | None, end_date: str | None
+    ) -> Any:
         prefetched = self.payload(symbol, "ohlcv")
         if prefetched is not None:
             return prefetched
@@ -766,7 +832,9 @@ def _payload_matches_data_type(payload: dict[str, Any], data_type: str) -> bool:
     return any(marker in payload for marker in markers.get(data_type, ()))
 
 
-def _indicator_request_parts(indicator: str, look_back_days: int | None) -> tuple[str, int | None]:
+def _indicator_request_parts(
+    indicator: str, look_back_days: int | None
+) -> tuple[str, int | None]:
     name = str(indicator).strip().lower()
     window = _window_from_name(name, 0) or look_back_days
     if name.startswith("macd"):
@@ -818,7 +886,9 @@ def _format_indicator(
         frame = frame[frame["date"].astype(str) <= str(curr_date)]
     frame = frame.tail(max(int(look_back_days), 1))
     name = indicator.strip().lower()
-    result = pd.DataFrame({"date": frame["date"] if "date" in frame.columns else range(len(frame))})
+    result = pd.DataFrame(
+        {"date": frame["date"] if "date" in frame.columns else range(len(frame))}
+    )
 
     close = pd.to_numeric(frame["close"], errors="coerce")
     if name.startswith("rsi"):
@@ -827,7 +897,10 @@ def _format_indicator(
         loss = (-delta.clip(upper=0)).rolling(14, min_periods=1).mean()
         result[name] = 100 - (100 / (1 + gain / loss.replace(0, pd.NA)))
     elif name.startswith("macd"):
-        macd = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
+        macd = (
+            close.ewm(span=12, adjust=False).mean()
+            - close.ewm(span=26, adjust=False).mean()
+        )
         result["macd"] = macd
         result["macd_signal"] = macd.ewm(span=9, adjust=False).mean()
         result["macd_hist"] = result["macd"] - result["macd_signal"]
@@ -857,7 +930,9 @@ def _format_runtime_indicator(payload: Any, indicator: str) -> str | None:
         indicators = payload.get("technical_indicators")
         if isinstance(indicators, dict):
             base_indicator, _ = _indicator_request_parts(indicator, None)
-            payload = indicators.get(base_indicator) or next(iter(indicators.values()), None)
+            payload = indicators.get(base_indicator) or next(
+                iter(indicators.values()), None
+            )
     elif isinstance(payload, dict) and "values" not in payload:
         base_indicator, _ = _indicator_request_parts(indicator, None)
         payload = payload.get(base_indicator) or next(iter(payload.values()), None)
@@ -897,10 +972,16 @@ def _format_news(payload: Any, limit: int | None = None) -> str:
     rows = items[:limit] if limit else items
     formatted = []
     for item in rows:
-        title = _mapping_get(item, "title") or _mapping_get(item, "headline") or "Untitled"
-        published = _mapping_get(item, "published_at") or _mapping_get(item, "date") or ""
+        title = (
+            _mapping_get(item, "title") or _mapping_get(item, "headline") or "Untitled"
+        )
+        published = (
+            _mapping_get(item, "published_at") or _mapping_get(item, "date") or ""
+        )
         source = _mapping_get(item, "source") or ""
-        summary = _mapping_get(item, "summary") or _mapping_get(item, "description") or ""
+        summary = (
+            _mapping_get(item, "summary") or _mapping_get(item, "description") or ""
+        )
         url = _mapping_get(item, "url") or ""
         formatted.append(
             f"- {published} {title}\n  Source: {source}\n  Summary: {summary}\n  URL: {url}"
@@ -924,7 +1005,11 @@ def _format_mapping(payload: Any, label: str) -> str:
     if isinstance(payload, str):
         return payload
     if isinstance(payload, list):
-        return pd.DataFrame(payload).to_csv(index=False) if payload else f"{UNAVAILABLE}: {label}"
+        return (
+            pd.DataFrame(payload).to_csv(index=False)
+            if payload
+            else f"{UNAVAILABLE}: {label}"
+        )
     if isinstance(payload, dict):
         return "\n".join(f"{key}: {value}" for key, value in payload.items())
     return str(payload)
@@ -945,13 +1030,17 @@ def _bars_frame(payload: Any) -> pd.DataFrame:
         frame = pd.DataFrame(rows)
     if frame.empty:
         return frame
-    frame.columns = [str(column).strip().lower().replace(" ", "_") for column in frame.columns]
+    frame.columns = [
+        str(column).strip().lower().replace(" ", "_") for column in frame.columns
+    ]
     rename = {
         "datetime": "date",
         "timestamp": "date",
         "adj_close": "adjusted_close",
     }
-    frame = frame.rename(columns={key: value for key, value in rename.items() if key in frame.columns})
+    frame = frame.rename(
+        columns={key: value for key, value in rename.items() if key in frame.columns}
+    )
     return frame
 
 

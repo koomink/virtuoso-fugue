@@ -76,8 +76,8 @@ class TradingAgentsGraph:
         os.makedirs(self.config["data_cache_dir"], exist_ok=True)
         os.makedirs(self.config["results_dir"], exist_ok=True)
 
-        # Initialize LLMs with provider-specific thinking configuration
-        llm_kwargs = self._get_provider_kwargs()
+        # Initialize LLMs with provider-specific thinking configuration.
+        llm_kwargs = self._get_provider_kwargs(self.config.get("llm_provider", ""))
 
         # Add callbacks to kwargs if provided (passed to LLM constructor)
         if self.callbacks:
@@ -98,7 +98,8 @@ class TradingAgentsGraph:
 
         self.deep_thinking_llm = deep_client.get_llm()
         self.quick_thinking_llm = quick_client.get_llm()
-        
+        self.agent_llms = self._create_agent_llms()
+
         self.memory_log = TradingMemoryLog(self.config)
 
         # Create tool nodes
@@ -114,12 +115,15 @@ class TradingAgentsGraph:
             self.deep_thinking_llm,
             self.tool_nodes,
             self.conditional_logic,
+            agent_llms=self.agent_llms,
         )
 
         self.propagator = Propagator(
             max_recur_limit=self.config.get("max_recur_limit", 100),
         )
-        self.reflector = Reflector(self.quick_thinking_llm)
+        self.reflector = Reflector(
+            self._llm_for_agent("reflector", self.quick_thinking_llm)
+        )
         self.signal_processor = SignalProcessor(self.quick_thinking_llm)
 
         # State tracking
@@ -132,27 +136,81 @@ class TradingAgentsGraph:
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
 
-    def _get_provider_kwargs(self) -> Dict[str, Any]:
+    def _get_provider_kwargs(
+        self,
+        provider: str,
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Get provider-specific kwargs for LLM client creation."""
         kwargs = {}
-        provider = self.config.get("llm_provider", "").lower()
+        overrides = overrides or {}
+        provider = provider.lower()
 
         if provider == "google":
-            thinking_level = self.config.get("google_thinking_level")
+            thinking_level = overrides.get(
+                "google_thinking_level",
+                overrides.get("thinking_level", self.config.get("google_thinking_level")),
+            )
             if thinking_level:
                 kwargs["thinking_level"] = thinking_level
 
         elif provider == "openai":
-            reasoning_effort = self.config.get("openai_reasoning_effort")
+            reasoning_effort = overrides.get(
+                "openai_reasoning_effort",
+                overrides.get("reasoning_effort", self.config.get("openai_reasoning_effort")),
+            )
             if reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
 
         elif provider == "anthropic":
-            effort = self.config.get("anthropic_effort")
+            effort = overrides.get(
+                "anthropic_effort",
+                overrides.get("effort", self.config.get("anthropic_effort")),
+            )
             if effort:
                 kwargs["effort"] = effort
 
+        for key in ("timeout", "max_retries"):
+            if key in overrides:
+                kwargs[key] = overrides[key]
         return kwargs
+
+    def _create_agent_llms(self) -> Dict[str, Any]:
+        """Create per-agent LLM overrides from config['agent_llms']."""
+        agent_specs = self.config.get("agent_llms") or {}
+        if not isinstance(agent_specs, dict):
+            raise ValueError("agent_llms must be a mapping of agent name to LLM config")
+
+        llms: Dict[str, Any] = {}
+        for raw_name, raw_spec in agent_specs.items():
+            if not isinstance(raw_spec, dict):
+                raise ValueError(f"agent_llms.{raw_name} must be a mapping")
+            agent_name = _normalize_agent_name(str(raw_name))
+            tier = str(raw_spec.get("tier") or _default_agent_tier(agent_name))
+            provider = str(raw_spec.get("provider") or self.config["llm_provider"])
+            model = str(
+                raw_spec.get("model")
+                or self.config[
+                    "deep_think_llm" if tier == "deep" else "quick_think_llm"
+                ]
+            )
+            base_url = raw_spec.get("base_url", raw_spec.get("backend_url"))
+            if base_url is None:
+                base_url = self.config.get("backend_url")
+            kwargs = self._get_provider_kwargs(provider, raw_spec)
+            if self.callbacks:
+                kwargs["callbacks"] = self.callbacks
+            client = create_llm_client(
+                provider=provider,
+                model=model,
+                base_url=base_url,
+                **kwargs,
+            )
+            llms[agent_name] = client.get_llm()
+        return llms
+
+    def _llm_for_agent(self, agent_name: str, default_llm: Any) -> Any:
+        return self.agent_llms.get(_normalize_agent_name(agent_name), default_llm)
 
     def _create_tool_nodes(self) -> Dict[str, ToolNode]:
         """Create tool nodes for different data sources using abstract methods."""
@@ -425,3 +483,24 @@ class TradingAgentsGraph:
     def process_signal(self, full_signal):
         """Process a signal to extract the core decision."""
         return self.signal_processor.process_signal(full_signal)
+
+
+def _normalize_agent_name(name: str) -> str:
+    normalized = name.strip().lower().replace(" ", "_").replace("-", "_")
+    return {
+        "sentiment": "social",
+        "sentiment_analyst": "social",
+        "social_media": "social",
+        "social_media_analyst": "social",
+        "aggressive_analyst": "aggressive_debator",
+        "neutral_analyst": "neutral_debator",
+        "conservative_analyst": "conservative_debator",
+    }.get(normalized, normalized)
+
+
+def _default_agent_tier(agent_name: str) -> str:
+    return (
+        "deep"
+        if agent_name in {"research_manager", "portfolio_manager"}
+        else "quick"
+    )

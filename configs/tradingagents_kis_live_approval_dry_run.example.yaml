@@ -1,0 +1,175 @@
+mode: live_approval
+
+portfolio:
+  base_currency: USD
+  allowed_symbols:
+    - CASH_USD
+    - AAPL
+
+universe:
+  policy:
+    allowed_asset_types: [stock, etf, us_etf]
+    allowed_regions: [US]
+    allowed_currencies: [USD]
+    allowed_broker_products: [kis_overseas_stock]
+    allowed_exchange_codes: [NASD, NYSE, AMEX]
+    denied_symbols: []
+    denied_asset_tags: []
+    max_new_symbols_per_run: 1
+    require_operator_approval_for_tradable: true
+    require_broker_tradability_check: true
+    require_data_freshness_check: true
+  instruments:
+    - symbol: CASH_USD
+      asset_type: cash
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: USD
+      quantity_step: 0.01
+      price_tick: 0.01
+      min_order_quantity: 0.01
+      min_order_notional: 0
+    - symbol: AAPL
+      asset_type: stock
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: AAPL
+      exchange_code: NASD
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+
+strategies:
+  - id: tradingagents
+    enabled: true
+    weight: 1.0
+    entrypoint: "tradingagents_virtuoso.strategy:TradingAgentsVirtuosoStrategy"
+    signal_to_allocation:
+      type: single_symbol_action_map
+      cash_symbol: CASH_USD
+      action_target_weights:
+        buy: 0.30
+        hold: 0.10
+        sell: 0.0
+    config:
+      symbol: AAPL
+      asset_type: stock
+      cash_symbol: CASH_USD
+      selected_analysts: ["market", "news", "fundamentals"]
+      llm_provider: openai
+      # OpenRouter is also supported when OPENROUTER_API_KEY is present:
+      # llm_provider: openrouter
+      # quick_think_llm: openai/gpt-4o-mini
+      # deep_think_llm: anthropic/claude-sonnet-4.5
+      # Agent-level overrides are optional. Keys are TradingAgents roles such as
+      # market, news, fundamentals, bull_researcher, bear_researcher,
+      # research_manager, trader, aggressive_debator, neutral_debator,
+      # conservative_debator, portfolio_manager, and reflector.
+      # agent_llms:
+      #   market:
+      #     provider: openrouter
+      #     model: openai/gpt-4o-mini
+      #   portfolio_manager:
+      #     provider: openai
+      #     model: gpt-5.4
+      #     reasoning_effort: high
+
+datahub:
+  providers:
+    - name: yahoo
+      provider: yahoo
+      data_types:
+        - price
+        - ohlcv
+        - fundamental
+        - financial_statements
+        - technical_indicators
+      symbols: [AAPL]
+      stale_after_seconds: 604800
+      symbol_map:
+        AAPL: AAPL
+    - name: gdelt_news
+      provider: gdelt
+      data_types: [news]
+      symbols: [AAPL, MARKET]
+      priority: 20
+      gdelt_timespan: 7d
+      gdelt_max_records: 25
+      stale_after_seconds: 604800
+      symbol_map:
+        AAPL: Apple
+        MARKET: "US stock market"
+
+execution:
+  engine: paper
+  order_generation_mode: target_rebalance
+  live_order_enabled: false
+  live_order_dry_run: true
+  require_reconciliation_pass: true
+  max_live_order_notional: 100
+  max_daily_live_notional: 300
+  max_daily_live_order_count: 1
+  daily_loss_limit: null
+  allowed_order_type: limit
+  order_status_poll_interval_seconds: 30
+  order_status_max_polls: 20
+  order_status_terminal_timeout_seconds: 1800
+  require_market_session: false
+  market_session_timezone: America/New_York
+  market_session_open: "09:30"
+  market_session_close: "16:00"
+  market_session_weekdays: [0, 1, 2, 3, 4]
+  market_session_holidays: []
+  require_broker_quote_validation: false
+  max_broker_quote_deviation_pct: 0.05
+  require_broker_risk_validation: false
+  live_order_fee_buffer_pct: 0.0
+  heartbeat_max_age_seconds: 0
+  scheduled_run_max_age_seconds: 0
+
+risk:
+  max_single_asset_weight: 0.4
+  min_cash_weight: 0.05
+
+state:
+  sqlite_path: var/tradingagents_kis_live_approval_dry_run_state.db
+
+audit:
+  jsonl_path: var/tradingagents_kis_live_approval_dry_run_audit.jsonl
+
+approval:
+  enabled: true
+  provider: telegram
+  require_approval: true
+  default_decision: expired
+  timeout_seconds: 300
+  telegram_bot_token_env: TELEGRAM_BOT_TOKEN
+  telegram_allowed_chat_ids:
+    - 123456789
+  whitelisted_user_ids:
+    - 123456789
+  telegram_poll_interval_seconds: 1.0
+
+kis:
+  enabled: true
+  provider: kis
+  broker_product: kis_overseas_stock
+  account_id_env: KIS_ACCOUNT_ID
+  app_key_env: KIS_APP_KEY
+  app_secret_env: KIS_APP_SECRET
+  access_token_env: KIS_ACCESS_TOKEN
+  approval_key_env: KIS_APPROVAL_KEY
+  token_cache_path: var/tradingagents_kis_access_token.json
+  paper_trading: false
+  timeout_seconds: 10
+
+reconciliation:
+  cash_tolerance: 0.0
+  position_quantity_tolerance: 0.0
+  value_tolerance: 0.0
+  max_age_seconds: 86400
