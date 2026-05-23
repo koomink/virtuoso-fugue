@@ -50,12 +50,8 @@ def test_maestro_run_once_loads_tradingagents_adapter_and_normalizes_signal(tmp_
               provider: mock
 
             execution:
-              engine: paper
+              proposal_engine: paper
               order_generation_mode: target_rebalance
-
-            risk:
-              max_single_asset_weight: 0.4
-              min_cash_weight: 0.05
 
             state:
               sqlite_path: {state_path}
@@ -252,21 +248,19 @@ def test_maestro_live_approval_dry_run_loads_tradingagents_adapter(tmp_path):
               provider: mock
 
             execution:
-              engine: paper
+              proposal_engine: paper
+              order_posture: dry_run
               order_generation_mode: target_rebalance
-              live_order_enabled: false
-              live_order_dry_run: true
               require_reconciliation_pass: true
-              max_live_order_notional: 500
-              max_daily_live_notional: 1000
-              max_daily_live_order_count: 1
-              require_market_session: false
-              require_broker_quote_validation: false
-              require_broker_risk_validation: false
-
-            risk:
-              max_single_asset_weight: 0.4
-              min_cash_weight: 0.05
+              live_order_limits:
+                max_order_notional: 500
+                max_daily_notional: 1000
+                max_daily_order_count: 1
+              market_session:
+                required: false
+              broker_validation:
+                require_quote_validation: false
+                require_risk_validation: false
 
             state:
               sqlite_path: {state_path}

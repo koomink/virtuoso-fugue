@@ -96,6 +96,11 @@ strategies:
       asset_type: stock
       cash_symbol: CASH
       selected_analysts: ["market", "news", "fundamentals"]
+      max_debate_rounds: 1
+      max_risk_discuss_rounds: 1
+      ohlcv_lookback_days: 260
+      news_lookback_days: 7
+      news_limit: 20
       llm_provider: openai
 ```
 
@@ -174,26 +179,37 @@ cp /root/projects/Symphony/Virtuoso/TradingAgents/configs/tradingagents_kis_live
 ```
 
 Edit the local config with private Telegram chat/user IDs, KIS account details,
-and operator-local `state`, `audit`, and token-cache paths. Keep
-`execution.live_order_enabled: false`, `execution.live_order_dry_run: true`, and
-`execution.require_broker_quote_validation: false` for the first rehearsal.
+LLM provider/model choices, and operator-local `state`, `audit`, and token-cache
+paths. Keep `execution.order_posture: dry_run` and
+`execution.broker_validation.require_quote_validation: false` for the first
+rehearsal. `maestro run-once` performs one full TradingAgents research cycle, so
+schedule it externally with systemd timer, cron, or an operator scheduler only
+after a manual dry-run has produced clean evidence.
 
-Required environment:
+Required environment depends on the selected providers. `live-preflight` checks
+the strategy `llm_provider` and `agent_llms` map and reports missing API-key env
+names without printing secret values.
 
 ```bash
-export OPENAI_API_KEY=...
-export OPENROUTER_API_KEY=...
+export OPENAI_API_KEY=...          # when llm_provider or an agent uses openai
+export OPENROUTER_API_KEY=...      # when llm_provider or an agent uses openrouter
+export ANTHROPIC_API_KEY=...       # when an agent uses anthropic
 export TELEGRAM_BOT_TOKEN=...
 export KIS_ACCOUNT_ID=...
 export KIS_APP_KEY=...
 export KIS_APP_SECRET=...
-export KIS_ACCESS_TOKEN=...
-export KIS_APPROVAL_KEY=...
+export KIS_ACCESS_TOKEN=...        # optional when token cache refresh is used
+export KIS_APPROVAL_KEY=...        # only if the selected KIS flow requires it
 ```
 
-Run the readiness checks and one approval-gated dry-run:
+Run the readiness checks and one approval-gated dry-run. The KIS snapshot and
+reconciliation steps must use the same operator-local config, state DB, and
+audit log as `run-once`.
 
 ```bash
+.venv/bin/maestro profile-validate --config configs/tradingagents_kis_live_approval_dry_run.local.yaml --target-stage live_approval_dry_run
+.venv/bin/maestro kis-sync --config configs/tradingagents_kis_live_approval_dry_run.local.yaml
+.venv/bin/maestro reconcile --config configs/tradingagents_kis_live_approval_dry_run.local.yaml
 .venv/bin/maestro health --config configs/tradingagents_kis_live_approval_dry_run.local.yaml
 .venv/bin/maestro live-preflight --config configs/tradingagents_kis_live_approval_dry_run.local.yaml
 .venv/bin/maestro run-once --config configs/tradingagents_kis_live_approval_dry_run.local.yaml
@@ -203,6 +219,12 @@ After the run, inspect the state database tables/events for `strategy_runs`,
 `live_proposal_data_snapshot`, and `live_order_dry_run`, plus the configured
 audit JSONL. A valid dry-run has a TradingAgents source signal, a normalized
 target allocation, a Telegram approval decision, and no broker order submission.
+
+Initial scheduler recommendation: run once before the target market session and
+set `monitoring.scheduled_run_max_age_seconds` to the expected maximum gap
+between runs. Keep retries manual until Yahoo/GDELT payload quality, KIS
+snapshot freshness, Telegram approval, and `live_order_dry_run` records have
+been reviewed over several sessions.
 
 <p align="center">
   <img src="assets/schema.png" style="width: 100%; height: auto;">

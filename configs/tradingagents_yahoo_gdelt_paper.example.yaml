@@ -91,12 +91,8 @@ datahub:
         MARKET: "US stock market"
 
 execution:
-  engine: paper
+  proposal_engine: paper
   order_generation_mode: target_rebalance
-
-risk:
-  max_single_asset_weight: 0.5
-  min_cash_weight: 0.05
 
 state:
   sqlite_path: var/tradingagents_yahoo_gdelt_paper_state.db
