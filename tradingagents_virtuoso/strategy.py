@@ -10,6 +10,7 @@ from typing import Any, Iterable
 
 import pandas as pd
 
+from maestro.credentials import CredentialResolver
 from maestro.sdk import (
     BaseStrategyPlugin,
     DataBundle,
@@ -24,6 +25,7 @@ from tradingagents.dataflows import config as dataflow_config
 from tradingagents.dataflows import interface as dataflow_interface
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
+from tradingagents.llm_clients.api_key_env import get_api_key_env
 
 
 UNAVAILABLE = "Maestro DataHub payload not supplied"
@@ -406,7 +408,34 @@ def _tradingagents_config(cfg: AdapterConfig) -> dict[str, Any]:
             },
         }
     )
+    _inject_llm_api_keys(config, CredentialResolver())
     return config
+
+
+def _inject_llm_api_keys(config: dict[str, Any], resolver: CredentialResolver) -> None:
+    api_key = _llm_api_key(config.get("llm_provider"), resolver)
+    if api_key:
+        config["api_key"] = api_key
+
+    agent_llms = config.get("agent_llms") or {}
+    if not isinstance(agent_llms, dict):
+        return
+    for raw_spec in agent_llms.values():
+        if not isinstance(raw_spec, dict):
+            continue
+        provider = raw_spec.get("provider") or config.get("llm_provider")
+        agent_api_key = _llm_api_key(provider, resolver)
+        if agent_api_key:
+            raw_spec["api_key"] = agent_api_key
+
+
+def _llm_api_key(provider: Any, resolver: CredentialResolver) -> str | None:
+    if not provider:
+        return None
+    env_name = get_api_key_env(str(provider))
+    if env_name is None:
+        return None
+    return resolver.get(env_name)
 
 
 @contextmanager

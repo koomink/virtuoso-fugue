@@ -329,6 +329,8 @@ Alternatively, copy `.env.example` to `.env` and fill in your keys:
 cp .env.example .env
 ```
 
+The standalone CLI loads `.env` and `.env.enterprise` explicitly. Importing `tradingagents` as a library does not load dotenv files; callers should load their own environment before constructing clients.
+
 ### CLI Usage
 
 Launch the interactive CLI:

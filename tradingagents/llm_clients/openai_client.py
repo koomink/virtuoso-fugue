@@ -201,18 +201,22 @@ class OpenAIClient(BaseLLMClient):
         if self.provider in _PROVIDER_BASE_URL:
             llm_kwargs["base_url"] = self.base_url or _resolve_provider_base_url(self.provider)
             api_key_env = get_api_key_env(self.provider)
+            explicit_api_key = self.kwargs.get("api_key")
             if api_key_env:
-                api_key = os.environ.get(api_key_env)
-                if api_key:
-                    llm_kwargs["api_key"] = api_key
+                if explicit_api_key:
+                    llm_kwargs["api_key"] = explicit_api_key
                 else:
-                    raise ValueError(
-                        f"API key for provider '{self.provider}' is not set. "
-                        f"Please set the {api_key_env} environment variable "
-                        f"(e.g. add {api_key_env}=your_key to your .env file)."
-                    )
+                    api_key = os.environ.get(api_key_env)
+                    if api_key:
+                        llm_kwargs["api_key"] = api_key
+                    else:
+                        raise ValueError(
+                            f"API key for provider '{self.provider}' is not set. "
+                            f"Please set the {api_key_env} environment variable "
+                            f"(e.g. add {api_key_env}=your_key to your .env file)."
+                        )
             else:
-                llm_kwargs["api_key"] = "ollama"
+                llm_kwargs["api_key"] = explicit_api_key or "ollama"
         elif self.base_url:
             llm_kwargs["base_url"] = self.base_url
 

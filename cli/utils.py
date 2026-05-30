@@ -448,7 +448,7 @@ def confirm_ollama_endpoint(url: str) -> None:
 
 
 def ensure_api_key(provider: str) -> Optional[str]:
-    """Make sure the API key for `provider` is available in the environment.
+    """Standalone CLI helper: make sure the API key for `provider` is available in the environment.
 
     If the env var is already set, returns its value untouched. Otherwise
     interactively prompts the user, persists the value to the project's

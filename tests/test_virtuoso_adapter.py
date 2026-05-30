@@ -92,10 +92,32 @@ sdk.StrategyManifest = StrategyManifest
 sdk.StrategyRuntime = StrategyRuntime
 sdk.StrategySignalResult = StrategySignalResult
 
+class CredentialResolver:
+    def get(self, name):
+        return None
+
+    def require(self, name):
+        value = self.get(name)
+        if value is None:
+            raise ValueError(f"Credential is not set: {name}")
+        return value
+
+    def present(self, name):
+        return self.get(name) is not None
+
+    def mask(self, name):
+        return None
+
+
+credentials = types.ModuleType("maestro.credentials")
+credentials.CredentialResolver = CredentialResolver
+
 maestro = types.ModuleType("maestro")
 maestro.sdk = sdk
+maestro.credentials = credentials
 sys.modules.setdefault("maestro", maestro)
 sys.modules.setdefault("maestro.sdk", sdk)
+sys.modules.setdefault("maestro.credentials", credentials)
 
 from tradingagents.dataflows import config as dataflow_config  # noqa: E402
 from tradingagents.dataflows import interface as dataflow_interface  # noqa: E402
@@ -394,6 +416,47 @@ def test_run_forwards_openrouter_and_agent_llm_overrides(monkeypatch):
     }
 
 
+def test_run_injects_llm_api_keys_from_maestro_resolver(monkeypatch):
+    captured_config = {}
+
+    class FakeResolver(CredentialResolver):
+        def get(self, name):
+            return {
+                "OPENROUTER_API_KEY": "openrouter-secret",
+                "ANTHROPIC_API_KEY": "anthropic-secret",
+            }.get(name)
+
+    class FakeGraph:
+        def __init__(self, selected_analysts, config):
+            del selected_analysts
+            captured_config.update(config)
+
+        def propagate(self, symbol, trade_date):
+            del symbol, trade_date
+            return ({"final_trade_decision": "Rating: Hold"}, "Rating: Hold")
+
+    monkeypatch.setattr(adapter, "CredentialResolver", FakeResolver)
+    monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
+
+    result = TradingAgentsVirtuosoStrategy().run(
+        DataBundle(data={}),
+        _context(
+            llm_provider="openrouter",
+            agent_llms={
+                "news": {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-4.5",
+                }
+            },
+        ),
+    )
+
+    assert captured_config["api_key"] == "openrouter-secret"
+    assert captured_config["agent_llms"]["news"]["api_key"] == "anthropic-secret"
+    assert "openrouter-secret" not in repr(result.metadata)
+    assert "anthropic-secret" not in repr(result.metadata)
+
+
 def test_run_rejects_unsupported_mode(monkeypatch):
     class FakeGraph:
         def __init__(self, selected_analysts, config):
@@ -637,7 +700,7 @@ def test_vendor_routing_is_restored_when_graph_raises(monkeypatch):
     assert dataflow_config.get_config() == original_config
 
 
-def test_adapter_imports_only_public_maestro_sdk():
+def test_adapter_imports_only_public_maestro_modules():
     source = Path(adapter.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
 
@@ -651,7 +714,7 @@ def test_adapter_imports_only_public_maestro_sdk():
     maestro_imports = [
         name for name in imports if name == "maestro" or name.startswith("maestro.")
     ]
-    assert maestro_imports == ["maestro.sdk"]
+    assert maestro_imports == ["maestro.credentials", "maestro.sdk"]
 
 
 def test_metadata_does_not_include_env_secret(monkeypatch):

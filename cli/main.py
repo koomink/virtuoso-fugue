@@ -2,6 +2,7 @@ from typing import Optional
 import datetime
 import typer
 import questionary
+from dotenv import find_dotenv, load_dotenv
 from pathlib import Path
 from functools import wraps
 from rich.console import Console
@@ -26,6 +27,14 @@ from cli.models import AnalystType
 from cli.utils import *
 from cli.announcements import fetch_announcements, display_announcements
 from cli.stats_handler import StatsCallbackHandler
+
+
+def _load_cli_dotenv() -> None:
+    load_dotenv(find_dotenv(usecwd=True))
+    load_dotenv(find_dotenv(".env.enterprise", usecwd=True), override=False)
+
+
+_load_cli_dotenv()
 
 console = Console()
 

@@ -170,6 +170,11 @@ class TradingAgentsGraph:
             if effort:
                 kwargs["effort"] = effort
 
+        if "api_key" in overrides:
+            kwargs["api_key"] = overrides["api_key"]
+        elif not overrides and self.config.get("api_key"):
+            kwargs["api_key"] = self.config["api_key"]
+
         for key in ("timeout", "max_retries"):
             if key in overrides:
                 kwargs[key] = overrides[key]
