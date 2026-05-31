@@ -62,7 +62,7 @@ TradingAgents is a multi-agent trading framework that mirrors the dynamics of re
 ### Maestro Virtuoso Adapter
 
 This repository includes a Virtuoso plugin adapter at
-`tradingagents_virtuoso.strategy:TradingAgentsVirtuosoStrategy`. The adapter
+`fugue.strategy:FugueStrategy`. The adapter
 loads TradingAgents as a research engine, requests market and research payloads
 through Maestro DataHub, and returns a Maestro `StrategySignalResult`. Maestro
 then converts the signal into a target allocation through the configured
@@ -80,10 +80,10 @@ Example Maestro strategy registration:
 
 ```yaml
 strategies:
-  - id: tradingagents
+  - id: fugue
     enabled: true
     weight: 1.0
-    entrypoint: "tradingagents_virtuoso.strategy:TradingAgentsVirtuosoStrategy"
+    entrypoint: "fugue.strategy:FugueStrategy"
     signal_to_allocation:
       type: single_symbol_action_map
       cash_symbol: CASH
@@ -162,8 +162,8 @@ Manual paper operator rehearsal:
 
 ```bash
 cd /root/projects/Symphony/Maestro
-uv pip install --python .venv/bin/python /root/projects/Symphony/Virtuoso/TradingAgents
-.venv/bin/maestro run-once --config /root/projects/Symphony/Virtuoso/TradingAgents/configs/tradingagents_yahoo_gdelt_paper.example.yaml
+uv pip install --python .venv/bin/python /root/projects/Symphony/Virtuoso/virtuoso-fugue
+.venv/bin/maestro run-once --config /root/projects/Symphony/Virtuoso/virtuoso-fugue/configs/fugue_yahoo_gdelt_paper.example.yaml
 ```
 
 The operator config uses live LLM credentials and live DataHub network providers
@@ -174,8 +174,8 @@ Manual live approval dry-run rehearsal:
 
 ```bash
 cd /root/projects/Symphony/Maestro
-uv pip install --python .venv/bin/python /root/projects/Symphony/Virtuoso/TradingAgents
-cp /root/projects/Symphony/Virtuoso/TradingAgents/configs/tradingagents_kis_live_approval_dry_run.example.yaml configs/tradingagents_kis_live_approval_dry_run.local.yaml
+uv pip install --python .venv/bin/python /root/projects/Symphony/Virtuoso/virtuoso-fugue
+cp /root/projects/Symphony/Virtuoso/virtuoso-fugue/configs/fugue_kis_live_approval_dry_run.example.yaml configs/fugue_kis_live_approval_dry_run.local.yaml
 ```
 
 Edit the local config with private Telegram chat/user IDs, KIS account details,
@@ -207,12 +207,12 @@ reconciliation steps must use the same operator-local config, state DB, and
 audit log as `run-once`.
 
 ```bash
-.venv/bin/maestro profile-validate --config configs/tradingagents_kis_live_approval_dry_run.local.yaml --target-stage live_approval_dry_run
-.venv/bin/maestro kis-sync --config configs/tradingagents_kis_live_approval_dry_run.local.yaml
-.venv/bin/maestro reconcile --config configs/tradingagents_kis_live_approval_dry_run.local.yaml
-.venv/bin/maestro health --config configs/tradingagents_kis_live_approval_dry_run.local.yaml
-.venv/bin/maestro live-preflight --config configs/tradingagents_kis_live_approval_dry_run.local.yaml
-.venv/bin/maestro run-once --config configs/tradingagents_kis_live_approval_dry_run.local.yaml
+.venv/bin/maestro profile-validate --config configs/fugue_kis_live_approval_dry_run.local.yaml --target-stage live_approval_dry_run
+.venv/bin/maestro kis-sync --config configs/fugue_kis_live_approval_dry_run.local.yaml
+.venv/bin/maestro reconcile --config configs/fugue_kis_live_approval_dry_run.local.yaml
+.venv/bin/maestro health --config configs/fugue_kis_live_approval_dry_run.local.yaml
+.venv/bin/maestro live-preflight --config configs/fugue_kis_live_approval_dry_run.local.yaml
+.venv/bin/maestro run-once --config configs/fugue_kis_live_approval_dry_run.local.yaml
 ```
 
 After the run, inspect the state database tables/events for `strategy_runs`,

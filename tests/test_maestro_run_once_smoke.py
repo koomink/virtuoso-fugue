@@ -12,7 +12,7 @@ def test_maestro_run_once_loads_tradingagents_adapter_and_normalizes_signal(tmp_
     repo_root = Path(__file__).resolve().parents[1]
     symphony_root = repo_root.parents[1]
     maestro_root = symphony_root / "Maestro"
-    config_path = tmp_path / "tradingagents_mock_paper.yaml"
+    config_path = tmp_path / "fugue_mock_paper.yaml"
     state_path = tmp_path / "state.db"
     audit_path = tmp_path / "audit.jsonl"
 
@@ -29,10 +29,10 @@ def test_maestro_run_once_loads_tradingagents_adapter_and_normalizes_signal(tmp_
                 - MOCK_ETF_A
 
             strategies:
-              - id: tradingagents
+              - id: fugue
                 enabled: true
                 weight: 1.0
-                entrypoint: "tradingagents_virtuoso.strategy:TradingAgentsVirtuosoStrategy"
+                entrypoint: "fugue.strategy:FugueStrategy"
                 signal_to_allocation:
                   type: single_symbol_action_map
                   cash_symbol: CASH
@@ -81,7 +81,7 @@ def test_maestro_run_once_loads_tradingagents_adapter_and_normalizes_signal(tmp_
         from maestro.orchestration.orchestrator import MaestroOrchestrator
         from maestro.sdk import DataRequest
         from maestro.state.store import StateStore
-        import tradingagents_virtuoso.strategy as adapter
+        import fugue.strategy as adapter
 
 
         class FakeTradingAgentsGraph:
@@ -118,7 +118,7 @@ def test_maestro_run_once_loads_tradingagents_adapter_and_normalizes_signal(tmp_
 
 
         adapter.TradingAgentsGraph = FakeTradingAgentsGraph
-        adapter.TradingAgentsVirtuosoStrategy.build_data_requests = fake_build_data_requests
+        adapter.FugueStrategy.build_data_requests = fake_build_data_requests
 
         config = load_config(Path(sys.argv[1]))
         summary = MaestroOrchestrator(config).run_once()
@@ -130,7 +130,7 @@ def test_maestro_run_once_loads_tradingagents_adapter_and_normalizes_signal(tmp_
         strategy_run = store.list_strategy_runs(limit=1)[0]["payload"]
         orders = store.list_orders(limit=10)
 
-        assert summary.loaded_strategies == ["tradingagents"]
+        assert summary.loaded_strategies == ["fugue"]
         assert summary.orders_created == 1
         assert strategy_run["source_signal"]["symbol"] == "MOCK_ETF_A"
         assert strategy_run["source_signal"]["action"] == "buy"
@@ -173,7 +173,7 @@ def test_maestro_run_once_loads_tradingagents_adapter_and_normalizes_signal(tmp_
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout.strip().splitlines()[-1])
-    assert payload["loaded_strategies"] == ["tradingagents"]
+    assert payload["loaded_strategies"] == ["fugue"]
     assert payload["orders_created"] == 1
     assert payload["allocations"] == {"MOCK_ETF_A": 0.3, "CASH": 0.7}
     assert payload["source_signal"]["action"] == "buy"
@@ -183,7 +183,7 @@ def test_maestro_live_approval_dry_run_loads_tradingagents_adapter(tmp_path):
     repo_root = Path(__file__).resolve().parents[1]
     symphony_root = repo_root.parents[1]
     maestro_root = symphony_root / "Maestro"
-    config_path = tmp_path / "tradingagents_mock_live_approval.yaml"
+    config_path = tmp_path / "fugue_mock_live_approval.yaml"
     state_path = tmp_path / "state.db"
     audit_path = tmp_path / "audit.jsonl"
 
@@ -227,10 +227,10 @@ def test_maestro_live_approval_dry_run_loads_tradingagents_adapter(tmp_path):
                   min_order_notional: 1
 
             strategies:
-              - id: tradingagents
+              - id: fugue
                 enabled: true
                 weight: 1.0
-                entrypoint: "tradingagents_virtuoso.strategy:TradingAgentsVirtuosoStrategy"
+                entrypoint: "fugue.strategy:FugueStrategy"
                 signal_to_allocation:
                   type: single_symbol_action_map
                   cash_symbol: CASH
@@ -310,10 +310,10 @@ def test_maestro_live_approval_dry_run_loads_tradingagents_adapter(tmp_path):
         from maestro.sdk import DataRequest
         from maestro.state.models import PortfolioState
         from maestro.state.store import StateStore
-        import tradingagents_virtuoso.strategy as adapter
+        import fugue.strategy as adapter
 
 
-        APPROVAL_ID = "appr_tradingagents_live_dry_run"
+        APPROVAL_ID = "appr_fugue_live_dry_run"
 
 
         class FakeTelegramClient:
@@ -397,7 +397,7 @@ def test_maestro_live_approval_dry_run_loads_tradingagents_adapter(tmp_path):
 
         approval_manager.new_approval_id = lambda: APPROVAL_ID
         adapter.TradingAgentsGraph = FakeTradingAgentsGraph
-        adapter.TradingAgentsVirtuosoStrategy.build_data_requests = fake_build_data_requests
+        adapter.FugueStrategy.build_data_requests = fake_build_data_requests
 
         config = load_config(Path(sys.argv[1]))
         plugin = load_strategy(config.strategies[0], run_mode=config.mode)
@@ -433,7 +433,7 @@ def test_maestro_live_approval_dry_run_loads_tradingagents_adapter(tmp_path):
         ]
         dry_run = store.list_system_events_by_type("live_order_dry_run")[0]["payload"]
 
-        assert summary.loaded_strategies == ["tradingagents"]
+        assert summary.loaded_strategies == ["fugue"]
         assert summary.orders_created == 1
         assert strategy_run["source_signal"]["symbol"] == "MOCK_ETF_A"
         assert strategy_run["source_signal"]["action"] == "buy"
@@ -479,7 +479,7 @@ def test_maestro_live_approval_dry_run_loads_tradingagents_adapter(tmp_path):
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout.strip().splitlines()[-1])
-    assert payload["loaded_strategies"] == ["tradingagents"]
+    assert payload["loaded_strategies"] == ["fugue"]
     assert payload["orders_created"] == 1
     assert payload["allocations"] == {"MOCK_ETF_A": 0.3, "CASH": 0.7}
     assert payload["dry_run_symbol"] == "MOCK_ETF_A"

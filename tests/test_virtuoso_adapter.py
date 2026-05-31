@@ -68,7 +68,7 @@ class BaseStrategyPlugin:
 
 @dataclass
 class StrategyContext:
-    strategy_id: str = "tradingagents"
+    strategy_id: str = "fugue"
     timestamp: datetime = datetime(2025, 1, 15, 12, 0, 0)
     run_mode: str = "paper"
     config: dict | None = None
@@ -123,8 +123,8 @@ from tradingagents.dataflows import config as dataflow_config  # noqa: E402
 from tradingagents.dataflows import interface as dataflow_interface  # noqa: E402
 from tradingagents.default_config import DEFAULT_CONFIG  # noqa: E402
 from tradingagents.graph import trading_graph as graph_module  # noqa: E402
-from tradingagents_virtuoso import strategy as adapter  # noqa: E402
-from tradingagents_virtuoso.strategy import TradingAgentsVirtuosoStrategy  # noqa: E402
+from fugue import strategy as adapter  # noqa: E402
+from fugue.strategy import FugueStrategy  # noqa: E402
 
 
 def _context(**overrides):
@@ -142,12 +142,12 @@ def _context(**overrides):
 
 
 def test_manifest_matches_maestro_contract():
-    plugin = TradingAgentsVirtuosoStrategy()
+    plugin = FugueStrategy()
 
     manifest = plugin.manifest()
 
     assert isinstance(plugin, BaseStrategyPlugin)
-    assert manifest.strategy_id == "tradingagents"
+    assert manifest.strategy_id == "fugue"
     assert manifest.sdk_contract_version == "1.1"
     assert manifest.result_type == "strategy_signal"
     assert manifest.supported_modes == ["paper", "live_approval"]
@@ -160,7 +160,7 @@ def test_manifest_matches_maestro_contract():
 
 
 def test_build_data_requests_declares_prefetch_contract():
-    plugin = TradingAgentsVirtuosoStrategy()
+    plugin = FugueStrategy()
 
     requests = plugin.build_data_requests(
         _context(include_insider_transactions=True, news_limit=5)
@@ -222,7 +222,7 @@ def test_run_maps_tradingagents_rating_to_strategy_signal(
             )
 
     monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
-    result = TradingAgentsVirtuosoStrategy().run(DataBundle(data={}), _context())
+    result = FugueStrategy().run(DataBundle(data={}), _context())
 
     assert isinstance(result, StrategySignalResult)
     assert result.symbol == "AAPL"
@@ -337,7 +337,7 @@ def test_data_bundle_vendor_formats_payloads_and_cleans_up(monkeypatch):
         }
     )
 
-    TradingAgentsVirtuosoStrategy().run(bundle, _context())
+    FugueStrategy().run(bundle, _context())
 
     assert dataflow_interface.VENDOR_METHODS == original_methods
     assert dataflow_config.get_config() == original_config
@@ -353,7 +353,7 @@ def test_run_accepts_live_approval_mode(monkeypatch):
 
     monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
 
-    result = TradingAgentsVirtuosoStrategy().run(
+    result = FugueStrategy().run(
         DataBundle(data={}),
         _context(run_mode="live_approval"),
     )
@@ -386,7 +386,7 @@ def test_run_forwards_openrouter_and_agent_llm_overrides(monkeypatch):
 
     monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
 
-    result = TradingAgentsVirtuosoStrategy().run(
+    result = FugueStrategy().run(
         DataBundle(data={}),
         _context(
             llm_provider="openrouter",
@@ -438,7 +438,7 @@ def test_run_injects_llm_api_keys_from_maestro_resolver(monkeypatch):
     monkeypatch.setattr(adapter, "CredentialResolver", FakeResolver)
     monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
 
-    result = TradingAgentsVirtuosoStrategy().run(
+    result = FugueStrategy().run(
         DataBundle(data={}),
         _context(
             llm_provider="openrouter",
@@ -468,7 +468,7 @@ def test_run_rejects_unsupported_mode(monkeypatch):
     monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
 
     with pytest.raises(ValueError, match="paper and live_approval"):
-        TradingAgentsVirtuosoStrategy().run(
+        FugueStrategy().run(
             DataBundle(data={}),
             _context(run_mode="live_readonly"),
         )
@@ -663,7 +663,7 @@ def test_runtime_vendor_fetches_missing_payloads_during_graph(monkeypatch):
     monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
     runtime = FakeRuntime()
 
-    TradingAgentsVirtuosoStrategy().run_with_runtime(
+    FugueStrategy().run_with_runtime(
         DataBundle(data={}), _context(), runtime
     )
 
@@ -694,7 +694,7 @@ def test_vendor_routing_is_restored_when_graph_raises(monkeypatch):
     monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
 
     with pytest.raises(RuntimeError, match="graph failed"):
-        TradingAgentsVirtuosoStrategy().run(DataBundle(data={}), _context())
+        FugueStrategy().run(DataBundle(data={}), _context())
 
     assert dataflow_interface.VENDOR_METHODS == original_methods
     assert dataflow_config.get_config() == original_config
@@ -729,6 +729,6 @@ def test_metadata_does_not_include_env_secret(monkeypatch):
 
     monkeypatch.setattr(adapter, "TradingAgentsGraph", FakeGraph)
 
-    result = TradingAgentsVirtuosoStrategy().run(DataBundle(data={}), _context())
+    result = FugueStrategy().run(DataBundle(data={}), _context())
 
     assert "super-secret-key" not in repr(result.metadata)

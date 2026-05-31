@@ -34,10 +34,10 @@ universe:
       min_order_notional: 1
 
 strategies:
-  - id: tradingagents
+  - id: fugue
     enabled: true
     weight: 1.0
-    entrypoint: "tradingagents_virtuoso.strategy:TradingAgentsVirtuosoStrategy"
+    entrypoint: "fugue.strategy:FugueStrategy"
     signal_to_allocation:
       type: single_symbol_action_map
       cash_symbol: CASH_USD
@@ -95,10 +95,10 @@ execution:
   order_generation_mode: target_rebalance
 
 state:
-  sqlite_path: var/tradingagents_yahoo_gdelt_paper_state.db
+  sqlite_path: var/fugue_yahoo_gdelt_paper_state.db
 
 audit:
-  jsonl_path: var/tradingagents_yahoo_gdelt_paper_audit.jsonl
+  jsonl_path: var/fugue_yahoo_gdelt_paper_audit.jsonl
 
 approval:
   enabled: false

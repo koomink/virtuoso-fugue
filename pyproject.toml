@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tradingagents"
+name = "virtuoso-fugue"
 version = "0.2.5"
-description = "TradingAgents: Multi-Agents LLM Financial Trading Framework"
+description = "Fugue Virtuoso app powered by the TradingAgents engine."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -36,13 +36,17 @@ dependencies = [
 tradingagents = "cli.main:app"
 
 [tool.setuptools.packages.find]
-include = ["tradingagents*", "tradingagents_virtuoso*", "cli*"]
+include = ["tradingagents*", "fugue*", "cli*"]
 
 [tool.setuptools.package-data]
 cli = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = [
+    ".",
+    "../../Maestro/src",
+]
 addopts = "-ra --strict-markers"
 markers = [
     "unit: fast isolated unit tests",
@@ -55,7 +59,7 @@ filterwarnings = [
 
 [tool.ruff]
 include = [
-    "tradingagents_virtuoso/**/*.py",
+    "fugue/**/*.py",
     "tests/test_virtuoso_adapter.py",
     "tests/test_maestro_run_once_smoke.py",
 ]

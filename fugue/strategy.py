@@ -54,7 +54,7 @@ class AdapterConfig:
     include_insider_transactions: bool = False
 
 
-class TradingAgentsVirtuosoStrategy(BaseStrategyPlugin):
+class FugueStrategy(BaseStrategyPlugin):
     """Maestro wrapper for the TradingAgents research graph."""
 
     VERSION = "0.1.0"
@@ -62,8 +62,8 @@ class TradingAgentsVirtuosoStrategy(BaseStrategyPlugin):
     def manifest(self) -> StrategyManifest:
         return StrategyManifest(
             sdk_contract_version="1.1",
-            strategy_id="tradingagents",
-            name="TradingAgents",
+            strategy_id="fugue",
+            name="Fugue",
             version=self.VERSION,
             supported_modes=["paper", "live_approval"],
             supported_asset_types=["cash", "stock", "etf", "domestic_etf", "us_etf"],
