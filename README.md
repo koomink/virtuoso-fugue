@@ -68,6 +68,12 @@ through Maestro DataHub, and returns a Maestro `StrategySignalResult`. Maestro
 then converts the signal into a target allocation through the configured
 `signal_to_allocation` policy.
 
+Packaging rule: `virtuoso-fugue` ships the `fugue` wrapper package and the
+bundled `tradingagents` engine package in the same distribution. Do not install
+an upstream or separately published `tradingagents` package into the same
+runtime environment; if both provide the `tradingagents` top-level package,
+Python import resolution can depend on install order and `sys.path`.
+
 Required strategy config keys are `symbol`, `asset_type`, and `cash_symbol`.
 The adapter supports Maestro `paper` and `live_approval` modes, while declaring
 `allow_direct_external_data_calls=False`; TradingAgents data tools are routed to
