@@ -7,6 +7,15 @@ import sys
 import textwrap
 from pathlib import Path
 
+from maestro.config.loader import load_config
+
+
+def test_live_approval_example_loads_with_kis_broker_products():
+    repo_root = Path(__file__).resolve().parents[1]
+    config = load_config(repo_root / "configs/fugue_kis_live_approval_dry_run.example.yaml")
+
+    assert [item.value for item in config.kis.effective_broker_products()] == ["kis_overseas_stock"]
+
 
 def test_maestro_run_once_loads_tradingagents_adapter_and_normalizes_signal(tmp_path):
     repo_root = Path(__file__).resolve().parents[1]
@@ -281,7 +290,8 @@ def test_maestro_live_approval_dry_run_loads_tradingagents_adapter(tmp_path):
             kis:
               enabled: true
               provider: mock
-              broker_product: kis_overseas_stock
+              broker_products:
+                - kis_overseas_stock
               account_id: MOCK
 
             reconciliation:

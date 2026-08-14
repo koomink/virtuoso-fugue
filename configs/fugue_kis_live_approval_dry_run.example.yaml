@@ -163,7 +163,8 @@ approval:
 kis:
   enabled: true
   provider: kis
-  broker_product: kis_overseas_stock
+  broker_products:
+    - kis_overseas_stock
   account_id_env: KIS_ACCOUNT_ID
   app_key_env: KIS_APP_KEY
   app_secret_env: KIS_APP_SECRET
