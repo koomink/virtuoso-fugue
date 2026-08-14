@@ -45,7 +45,7 @@ cli = ["static/*"]
 testpaths = ["tests"]
 pythonpath = [
     ".",
-    "../../Maestro/src",
+    "../../maestro/src",
 ]
 addopts = "-ra --strict-markers"
 markers = [

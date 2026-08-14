@@ -167,9 +167,9 @@ submission.
 Manual paper operator rehearsal:
 
 ```bash
-cd /root/projects/Symphony/Maestro
-uv pip install --python .venv/bin/python /root/projects/Symphony/Virtuoso/virtuoso-fugue
-.venv/bin/maestro run-once --config /root/projects/Symphony/Virtuoso/virtuoso-fugue/configs/fugue_yahoo_gdelt_paper.example.yaml
+cd /home/symphony/maestro
+uv pip install --python .venv/bin/python /home/symphony/virtuoso/virtuoso-fugue
+.venv/bin/maestro run-once --config /home/symphony/virtuoso/virtuoso-fugue/configs/fugue_yahoo_gdelt_paper.example.yaml
 ```
 
 The operator config uses live LLM credentials and live DataHub network providers
@@ -179,9 +179,9 @@ key, such as `OPENAI_API_KEY`, before running it.
 Manual live approval dry-run rehearsal:
 
 ```bash
-cd /root/projects/Symphony/Maestro
-uv pip install --python .venv/bin/python /root/projects/Symphony/Virtuoso/virtuoso-fugue
-cp /root/projects/Symphony/Virtuoso/virtuoso-fugue/configs/fugue_kis_live_approval_dry_run.example.yaml configs/fugue_kis_live_approval_dry_run.local.yaml
+cd /home/symphony/maestro
+uv pip install --python .venv/bin/python /home/symphony/virtuoso/virtuoso-fugue
+cp /home/symphony/virtuoso/virtuoso-fugue/configs/fugue_kis_live_approval_dry_run.example.yaml configs/fugue_kis_live_approval_dry_run.local.yaml
 ```
 
 Edit the local config with private Telegram chat/user IDs, KIS account details,
